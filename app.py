@@ -1,13 +1,16 @@
+from datetime import date
+
 import joblib
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
-# --- Page Configuration ---
-st.set_page_config(page_title="ED Waiting Predictor", layout="centered")
-st.title("ED Waiting Volume Predictor")
-st.markdown("Predict the average number of persons waiting for emergency treatment based on environmental and epidemiological factors.")
+# config
+st.set_page_config(page_title="ED Waiting Volumes", layout="wide")
+st.title("ED Waiting Volume")
+st.markdown("Predict the average number of persons waiting for EDs")
 
-# --- Cache Model Loading ---
+# caching
 @st.cache_resource
 def load_model():
     return joblib.load(r"best_xgboost_model.pkl")
@@ -18,7 +21,7 @@ except Exception as e:
     st.error(f"Error loading model: {e}. Please ensure 'best_xgboost_model.pkl' is in the same directory.")
     st.stop()
 
-# --- Data Dictionaries ---
+# hospital dicts
 LHD_HOSPITAL_DATA = {
     "Central Coast": {"Gosford Hospital": 2250, "Wyong Hospital": 2259},
     "Far West": {"Broken Hill Health Service": 2880},
@@ -88,90 +91,107 @@ LHD_HOSPITAL_DATA = {
     },
 }
 
-# --- Inputs: Facility & Timing ---
-with st.container(border=True):
-    st.subheader("Facility & Timing")
-    col_lhd, col_hosp = st.columns(2)
+#split dashbaord
+col_inputs, col_dashboard = st.columns([1, 2])
 
-    with col_lhd:
-        selected_lhd = st.selectbox("Local Health District (LHD)", sorted(list(LHD_HOSPITAL_DATA.keys())))
+with col_inputs:
+    st.header("Interactive Model Inputs")
+    
+    #inputs lhd
+    with st.container(border=True):
+        st.subheader("Facility & Timing")
+        col_lhd, col_hosp = st.columns(2)
 
-    hospital_options = sorted(list(LHD_HOSPITAL_DATA[selected_lhd].keys()))
-    with col_hosp:
-        selected_hospital = st.selectbox("Hospital Name", hospital_options)
+        with col_lhd:
+            selected_lhd = st.selectbox("Local Health District (LHD)", sorted(list(LHD_HOSPITAL_DATA.keys())))
 
-    selected_postcode = LHD_HOSPITAL_DATA[selected_lhd][selected_hospital]
+        hospital_options = sorted(list(LHD_HOSPITAL_DATA[selected_lhd].keys()))
+        with col_hosp:
+            selected_hospital = st.selectbox("Hospital Name", hospital_options)
 
-    day = st.selectbox("Day of Week", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
+        selected_postcode = LHD_HOSPITAL_DATA[selected_lhd][selected_hospital]
 
-# --- Inputs: Epidemiological Surveillance ---
-with st.container(border=True):
-    st.subheader("Infectious Disease Surveillance")
-    combined_cases = st.number_input(
-        "Combined Infectious Cases (COVID + Influenza + RSV)",
-        min_value=0, value=20, step=1,
-    )
+        selected_date = st.date_input("Prediction Date", value=date.today())
+        day = selected_date.strftime("%A")
 
-    covid_cases = int(combined_cases * 0.4)
-    rsv_cases = int(combined_cases * 0.3)
-    flu_cases = int(combined_cases * 0.3)
+    # inputs
+    with st.container(border=True):
+        st.subheader("Infectious Disease Surveillance")
+        combined_cases = st.number_input(
+            "Combined Infectious Cases (COVID + Influenza + RSV)",
+            min_value=0, value=20, step=1,
+        )
 
-# --- Inputs: Meteorological Conditions ---
-with st.container(border=True):
-    st.subheader("Weather Conditions")
-    col_t1, col_t2 = st.columns(2)
-    with col_t1:
-        temp_min = st.slider("Min Temperature (°C)", -5.0, 35.0, 15.0, 0.5)
-    with col_t2:
-        temp_max = st.slider("Max Temperature (°C)", 0.0, 48.0, 24.0, 0.5)
+        covid_cases = int(combined_cases * 0.4)
+        rsv_cases = int(combined_cases * 0.3)
+        flu_cases = int(combined_cases * 0.3)
 
-    col_w1, col_w2 = st.columns(2)
-    with col_w1:
-        rain = st.number_input("Precipitation (mm)", min_value=0.0, max_value=200.0, value=0.0, step=0.5)
-    with col_w2:
-        humidity_mean = st.slider("Mean Relative Humidity (%)", 10, 100, 65)
+    # inpuits weather
+    with st.container(border=True):
+        st.subheader("Weather Conditions")
+        col_t1, col_t2 = st.columns(2)
+        with col_t1:
+            temp_min = st.slider("Min Temp (°C)", -5.0, 35.0, 15.0, 0.5)
+        with col_t2:
+            temp_max = st.slider("Max Temp (°C)", 0.0, 48.0, 24.0, 0.5)
 
-    humidity_min = max(humidity_mean - 15, 10)
-    humidity_max = min(humidity_mean + 15, 100)
+        col_w1, col_w2 = st.columns(2)
+        with col_w1:
+            rain = st.number_input("Precip (mm)", min_value=0.0, max_value=200.0, value=0.0, step=0.5)
+        with col_w2:
+            humidity_mean = st.slider("Mean Rel Humidity (%)", 10, 100, 65)
 
-# --- Live Prediction ---
-st.divider()
+        humidity_min = max(humidity_mean - 15, 10)
+        humidity_max = min(humidity_mean + 15, 100)
 
-input_data = {
-    "Postcode": [selected_postcode],
-    "COVID Cases": [covid_cases],
-    "RSV Cases": [rsv_cases],
-    "Influenza Cases": [flu_cases],
-    "Combined Cases": [combined_cases],
-    "temperature_max": [temp_max],
-    "temperature_min": [temp_min],
-    "precipitation_sum": [rain],
-    "relative_humidity_min": [humidity_min],
-    "relative_humidity_max": [humidity_max],
-    "relative_humidity_mean": [humidity_mean],
-    "Day of Week": [day],
-    "LHD": [selected_lhd],
-    "Hospital Name": [selected_hospital],
-}
-input_df = pd.DataFrame(input_data)
+    # predictions
+    st.divider()
 
-X_encoded = pd.get_dummies(input_df, columns=["Day of Week", "LHD", "Hospital Name"], drop_first=False)
+    input_data = {
+        "Postcode": [selected_postcode],
+        "COVID Cases": [covid_cases],
+        "RSV Cases": [rsv_cases],
+        "Influenza Cases": [flu_cases],
+        "Combined Cases": [combined_cases],
+        "temperature_max": [temp_max],
+        "temperature_min": [temp_min],
+        "precipitation_sum": [rain],
+        "relative_humidity_min": [humidity_min],
+        "relative_humidity_max": [humidity_max],
+        "relative_humidity_mean": [humidity_mean],
+        "Day of Week": [day],
+        "LHD": [selected_lhd],
+        "Hospital Name": [selected_hospital],
+    }
+    input_df = pd.DataFrame(input_data)
 
-bool_cols = X_encoded.select_dtypes(include=["bool"]).columns
-X_encoded[bool_cols] = X_encoded[bool_cols].astype(int)
+    X_encoded = pd.get_dummies(input_df, columns=["Day of Week", "LHD", "Hospital Name"], drop_first=False)
 
-try:
-    model_features = model.get_booster().feature_names
-except AttributeError:
-    model_features = list(model.feature_names_in_)
+    bool_cols = X_encoded.select_dtypes(include=["bool"]).columns
+    X_encoded[bool_cols] = X_encoded[bool_cols].astype(int)
 
-X_encoded = X_encoded.reindex(columns=model_features, fill_value=0)
+    try:
+        model_features = model.get_booster().feature_names
+    except AttributeError:
+        model_features = list(model.feature_names_in_)
 
-pred = model.predict(X_encoded)[0]
+    X_encoded = X_encoded.reindex(columns=model_features, fill_value=0)
 
-col_res1, col_res2, col_res3 = st.columns([1, 2, 1])
-with col_res2:
+    pred = model.predict(X_encoded)[0]
+    
     st.metric(
         label=f"Estimated Average Persons Waiting at {selected_hospital}",
         value=f"{max(0.0, float(pred)):.1f}"
     )
+
+with col_dashboard:
+    st.header("Power BI Dashboard")
+    
+    #powerbi urls for embedding
+    power_bi_url = "https://app.powerbi.com/reportEmbed?reportId=92532c23-bc0c-4c3b-b6b5-3e3d1b5e37d3&autoAuth=true&ctid=a687a7bf-02db-43df-bcbb-e7a8bda611a2"
+    
+    #embed powerbi
+    components.iframe(power_bi_url, height=850, scrolling=True)
+    
+    
+    
